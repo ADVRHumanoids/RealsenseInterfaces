@@ -1,0 +1,6 @@
+*.kdev4
+*.kate-swp
+*.asv
+*.vscode/
+.catkin_tools
+*.pyc
