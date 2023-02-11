@@ -27,72 +27,72 @@
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/point_cloud2_iterator.h>
-#include <geometry_msgs/Transform.h> //for pcl_ros::transrformPointCloud
+#include <geometry_msgs/Transform.h>
+#include <tf2/LinearMath/Transform.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+
 #include <pcl_ros/point_cloud.h>
 #include <pcl_ros/transforms.h>
 
 namespace realsense_interfaces {
+    
+typedef pcl::PointXYZ Point;
+typedef pcl::PointXYZRGB PointColor;
+typedef pcl::PointCloud<PointColor> PointCloud;   
     
 class D435Interface {
     
 public:
     
     D435Interface(const std::string &camera_name, 
-                  const std::string &serial_no);
+                  const std::string &serial_no,
+                  const bool &moving_cam=false
+                 );
     
-    bool init(const rs2::context & ctx);
-    
-    bool update();
+    bool init(const geometry_msgs::Transform & ref_T_cam, const std::string& ref_frame);
+    bool start(const rs2::context & ctx);
+    bool update(const geometry_msgs::Transform* ref_T_cam = nullptr);
     
     virtual ~D435Interface() {};
     
-    sensor_msgs::PointCloud2 getPointCloudMsg() const;
-    pcl::PointCloud<pcl::PointXYZ> getPointCloud() const;
-    pcl::PointCloud<pcl::PointXYZRGB> getPointCloudRGB() const;
+    std::string getCameraName() const;
+    std::string getSerial() const;
+    geometry_msgs::Transform getRefTCam() const;
+    std::string getRefFrame() const;
+    const std::vector<geometry_msgs::TransformStamped>* getStaticTransforms() const;
+        
+    PointCloud::ConstPtr getPointCloud() const;
+    
+    void fromMsg(const geometry_msgs::Transform& in, tf2::Transform& out);
+    void fromMsg(const geometry_msgs::Vector3& in, tf2::Vector3& out);
+    void fromMsg(const geometry_msgs::Quaternion& in, tf2::Quaternion& out);
+
     
 private:
     const std::string _camera_name;
     const std::string _serial_no;
-    
-    //params originally get from launch file
-    bool _ordered_pc;
-    bool _align_depth;
-    bool _allow_no_texture_points; //launch param, default to false
     const std::string _depth_optical_frame;
     const std::string _color_optical_frame;
-    
+    const bool _moving_cam;
+
     std::shared_ptr<rs2::pipeline> _pipeline;
     
     rs2::pointcloud _pointcloud;
     rs2::points _points;    
     
-    //rs2_extrinsics _cam_T_ref;
-    geometry_msgs::Transform _cam_T_ref;
-    
-    sensor_msgs::PointCloud2 _msg_pointcloud;
-    pcl::PointCloud<pcl::PointXYZ> _pcl_pointcloud;
-    pcl::PointCloud<pcl::PointXYZRGB> _pcl_pointcloudrgb;
-    
-    bool pointsToRosWithColors(const rs2::frameset& frameset);
-    double frameSystemTimeSec(const rs2::frame& frame);
-    bool setBaseTime(double frame_time, rs2_timestamp_domain time_domain);
-    void reverse_memcpy(unsigned char* dst, const unsigned char* src, size_t n);
-    
-    bool transformPointCloud();
-    
-    std::shared_ptr<rs2::pointcloud> _pointcloud_filter;
-    bool _is_initialized_time_base = false;
-    ros::Time _ros_time_base;
-    double _camera_time_base;
-    
-    
-    /****************/
-    std::shared_ptr<rs2::align> align_to_depth;
-    rs2::colorizer colorizer;
-    
-    /************/
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr PCL_Conversion(const rs2::points& points, const rs2::video_frame& color);
+    bool updateTransforms();
+    geometry_msgs::Transform _ref_T_cam;
+    std::string _ref_frame;
+    tf2::Transform _cam_T_optical_tf;
+    geometry_msgs::Transform _ref_T_optical;
+
+    PointCloud::Ptr  _pcl_pointcloud;
+    bool pointsToPclColored(const rs2::video_frame& color);
     std::tuple<int, int, int> RGB_Texture(rs2::video_frame texture, rs2::texture_coordinate Texture_XY);
+    
+    std::vector<geometry_msgs::TransformStamped> _static_transforms;
+
+    void setStaticTransforms();
 };
 
 } //namespace

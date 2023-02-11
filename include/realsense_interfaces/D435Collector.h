@@ -17,10 +17,16 @@
 #ifndef D435_COLLECTOR_H
 #define D435_COLLECTOR_H
 
+#include <vector>
+#include <string>
+
 #include <ros/ros.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+
 #include <librealsense2/rs.hpp> // Include RealSense Cross Platform API
 
-#include "D435Interface.h"
+#include <realsense_interfaces/D435Interface.h>
 
 namespace realsense_interfaces {
 
@@ -30,16 +36,23 @@ public:
     
     D435Collector(ros::NodeHandle* nh);
     bool init();
+    bool start();
     bool run();
     
-    rs2::context ctx;
+    rs2::context _ctx;
 
     
 private:
     ros::NodeHandle* _nh;
+    ros::Publisher _pointcloud_publisher;
+    tf2_ros::StaticTransformBroadcaster _static_tf_broadcaster;
     
-    std::map<std::string, std::unique_ptr<D435Interface>> _cams;
-    std::shared_ptr<rs2::pointcloud> _pointcloud_filter;
+    std::vector<std::string> _camera_input_names;
+    std::vector<std::string> _camera_input_serials;
+    
+    std::map<std::string, realsense_interfaces::D435Interface> _cams;
+    
+    realsense_interfaces::PointCloud _final_cloud;
 
 
 };

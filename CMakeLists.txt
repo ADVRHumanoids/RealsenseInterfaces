@@ -13,6 +13,8 @@ find_package(catkin REQUIRED
   geometry_msgs
   sensor_msgs
   pcl_ros
+  tf2
+  tf2_geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -61,22 +63,32 @@ target_link_libraries(${PROJECT_NAME}_D435Interface
     ${realsense2_LIBRARY}
 )
 
-#     add_library(${PROJECT_NAME}_D435Collector src/D435Collector.cpp)
-# 
-#     target_link_libraries(${PROJECT_NAME}_D435Collector
-#         ${catkin_LIBRARIES}
-#         ${realsense2_LIBRARY}
-#     )
+add_library(${PROJECT_NAME}_D435Collector src/D435Collector.cpp)
 
-add_executable(${PROJECT_NAME}_D435Sdk src/D435Sdk.cpp)
-
-target_link_libraries(${PROJECT_NAME}_D435Sdk
+target_link_libraries(${PROJECT_NAME}_D435Collector
     ${catkin_LIBRARIES}
     ${realsense2_LIBRARY}
     ${PROJECT_NAME}_D435Interface
+)
+
+# add_executable(${PROJECT_NAME}_D435Sdk src/D435Sdk.cpp)
+# 
+# target_link_libraries(${PROJECT_NAME}_D435Sdk
+#     ${catkin_LIBRARIES}
+#     ${realsense2_LIBRARY}
+#     ${PROJECT_NAME}_D435Interface
+# 
+# )
+# set_target_properties(${PROJECT_NAME}_D435Sdk PROPERTIES OUTPUT_NAME "D435Sdk")
+
+add_executable(${PROJECT_NAME}_main src/main.cpp)
+
+target_link_libraries(${PROJECT_NAME}_main
+    ${catkin_LIBRARIES}
+    ${PROJECT_NAME}_D435Collector
 
 )
-set_target_properties(${PROJECT_NAME}_D435Sdk PROPERTIES OUTPUT_NAME "D435Sdk")
+set_target_properties(${PROJECT_NAME}_main PROPERTIES OUTPUT_NAME "main")
     
     
 

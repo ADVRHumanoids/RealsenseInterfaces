@@ -3,47 +3,46 @@
 using realsense_interfaces::D435Interface;
 
 D435Interface::D435Interface(const std::string &camera_name, 
-                  const std::string &serial_no) :
+                  const std::string &serial_no, const bool &moving_cam) :
                   _camera_name(camera_name), _serial_no(serial_no),
                   _depth_optical_frame(_camera_name + "_depth_optical_frame"),
-                  _color_optical_frame(_camera_name + "_color_optical_frame")
+                  _color_optical_frame(_camera_name + "_color_optical_frame"),
+                  _moving_cam(moving_cam)
 
 {
-    _ordered_pc = true;
-    _align_depth = true;
-    _allow_no_texture_points = false; //launch param, default to false
-        
-        
-/*    _cam_T_ref.translation[0] = 1;     
-    _cam_T_ref.translation[1] = 1;     
-    _cam_T_ref.translation[2] = 1;     
-    _cam_T_ref.rotation[0] = 1;     
-    _cam_T_ref.rotation[1] = 0;     
-    _cam_T_ref.rotation[2] = 0; 
-    
-    _cam_T_ref.rotation[3] = 0;     
-    _cam_T_ref.rotation[4] = 1;     
-    _cam_T_ref.rotation[5] = 0; 
-    
-    _cam_T_ref.rotation[6] = 0;     
-    _cam_T_ref.rotation[7] = 0;     
-    _cam_T_ref.rotation[8] = 1; */    
-
-    _cam_T_ref.translation.x = 0;
-    _cam_T_ref.translation.y = 0;
-    _cam_T_ref.translation.z = 5;
-    _cam_T_ref.rotation.x = 0;
-    _cam_T_ref.rotation.y = 0;
-    _cam_T_ref.rotation.z = 0;
-    _cam_T_ref.rotation.w = 1;
-                  
-    align_to_depth = std::make_shared<rs2::align>(RS2_STREAM_DEPTH);
-    
-    _pointcloud_filter = std::make_shared<rs2::pointcloud>(RS2_STREAM_COLOR, 0);
 
 }
 
-bool D435Interface::init(const rs2::context & ctx) {
+/***
+ * cam_T_ref is the trasf from camera to reference... then here we store the optical to ref since this is
+ * necessary to transform the pointcloud wrt the ref frame
+ */
+bool D435Interface::init(const geometry_msgs::Transform& ref_T_cam, const std::string& ref_frame) {
+    
+    _ref_frame = ref_frame;
+    _ref_T_cam = ref_T_cam;
+
+    setStaticTransforms();
+    
+    bool flag = updateTransforms();
+    
+    return flag;
+}
+
+bool D435Interface::updateTransforms() {
+    
+    tf2::Transform ref_T_cam_tf, ref_T_optical_tf;
+    D435Interface::fromMsg(_ref_T_cam, ref_T_cam_tf);
+    
+    ref_T_optical_tf = ref_T_cam_tf * _cam_T_optical_tf;
+    
+    _ref_T_optical = tf2::toMsg(ref_T_optical_tf);
+    
+    return true;
+}
+
+
+bool D435Interface::start(const rs2::context & ctx) {
     
     rs2::config cfg;
     cfg.enable_device(_serial_no);
@@ -51,9 +50,6 @@ bool D435Interface::init(const rs2::context & ctx) {
     
     _pipeline = std::make_unique<rs2::pipeline>(ctx);
     auto pipe_profile = _pipeline->start(cfg);
-    
-    //pipeline = std::make_unique<rs2::pipeline>();
-    //auto pipe_profile = pipeline->start();
     
  	try {
         auto fs = _pipeline->wait_for_frames(10000); //milliseconds
@@ -72,7 +68,7 @@ bool D435Interface::init(const rs2::context & ctx) {
     
 }
 
-bool D435Interface::update() {
+bool D435Interface::update(const geometry_msgs::Transform* ref_T_cam) {
     
     rs2::frameset fs;
     if (! _pipeline->poll_for_frames(&fs)) {
@@ -83,262 +79,33 @@ bool D435Interface::update() {
        // ROS_INFO("retrieved %ld frames", fs.size());
     }
 
-    //fs = align_to_depth->process(fs);
     
     auto color = fs.get_color_frame();
     auto depth = fs.get_depth_frame();
-    //auto depth_color = colorizer.colorize(depth);
 
     _pointcloud.map_to(color);
 
     _points = _pointcloud.calculate(depth);
-
-    ///////////// transform ??rs2_transform_point_to_point??
-//     _points_transformed = _points;
-//     
-//     rs2::vertex* points_vertex = _points.get_vertices();
-//     rs2::vertex* points_transformed_vertex = _points_transformed.get_vertices();
-//     
-//     for (size_t i=0; i<points_vertex.size(); i++) {
-//         rs2_transform_point_to_point(points_transformed_vertex[i], _cam_T_ref , points_vertex[i]);
-//     }
     
-    ///////////////////////////////
-    //pointsToRosWithColors(fs);
-//////////////////////////
+    if (_moving_cam && ref_T_cam != nullptr) {
+        _ref_T_cam = *ref_T_cam;
+        updateTransforms();
+    }
     
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud = PCL_Conversion(_points, color);
-    
-    _pcl_pointcloudrgb = *cloud;
-    _pcl_pointcloudrgb.header.frame_id = "map";
-    auto tick = ros::Time::now();
-    pcl_ros::transformPointCloud(_pcl_pointcloudrgb, _pcl_pointcloudrgb, _cam_T_ref);
-
-    std::cout << "duration: " << (ros::Time::now() - tick).toSec() << std::endl;
-    //transformPointCloud();
+    pointsToPclColored(color);
     
     
-    
-    /***********************/   
+    pcl_ros::transformPointCloud(*_pcl_pointcloud, *_pcl_pointcloud, _ref_T_optical);
+     _pcl_pointcloud->header.frame_id = _ref_frame;
     
     return true;
 }
 
-sensor_msgs::PointCloud2 D435Interface::getPointCloudMsg () const {
-    return _msg_pointcloud;
-}
-pcl::PointCloud<pcl::PointXYZ> D435Interface::getPointCloud () const {
-    return _pcl_pointcloud;
-}
-pcl::PointCloud<pcl::PointXYZRGB> D435Interface::getPointCloudRGB () const {
-    return _pcl_pointcloudrgb;
-}
 
-bool D435Interface::transformPointCloud() { 
-        
-    pcl::fromROSMsg(_msg_pointcloud,_pcl_pointcloud);
-    
-    pcl_ros::transformPointCloud(_pcl_pointcloud, _pcl_pointcloud, _cam_T_ref);
-    
-    pcl::toROSMsg(_pcl_pointcloud, _msg_pointcloud);
+bool D435Interface::pointsToPclColored(const rs2::video_frame& color){
 
-
-    return true;
-}
-
-
-
-bool D435Interface::pointsToRosWithColors(const rs2::frameset& frameset) {
-    
-    double frame_time = frameset.get_timestamp();
-
-    if (! _is_initialized_time_base )
-    {
-        _is_initialized_time_base = setBaseTime(frame_time, frameset.get_frame_timestamp_domain());
-    }
-    ros::Time t(frameSystemTimeSec(frameset));
-
-    rs2_stream texture_source_id = static_cast<rs2_stream>(_pointcloud_filter->get_option(rs2_option::RS2_OPTION_STREAM_FILTER));
-
-    bool use_texture = texture_source_id != RS2_STREAM_ANY;
-    static int warn_count(0);
-    static const int DISPLAY_WARN_NUMBER(5);
-
-    rs2::frameset::iterator texture_frame_itr = frameset.end();        
-
-    if (use_texture)
-    {
-        std::set<rs2_format> available_formats{ rs2_format::RS2_FORMAT_RGB8, rs2_format::RS2_FORMAT_Y8 };
-
-        texture_frame_itr = std::find_if(frameset.begin(), frameset.end(), [&texture_source_id, &available_formats] (rs2::frame f)
-                                {return (rs2_stream(f.get_profile().stream_type()) == texture_source_id) &&
-                                            (available_formats.find(f.get_profile().format()) != available_formats.end()); });
-        if (texture_frame_itr == frameset.end())
-        {
-            warn_count++;
-            std::string texture_source_name = _pointcloud_filter->get_option_value_description(rs2_option::RS2_OPTION_STREAM_FILTER, static_cast<float>(texture_source_id));
-            ROS_WARN_STREAM_COND(warn_count == DISPLAY_WARN_NUMBER, "No stream match for pointcloud chosen texture " << texture_source_name);
-            return false;
-        }
-        warn_count = 0;
-    }
-    
-    int texture_width(0), texture_height(0);
-    int num_colors(0);
-
-    const rs2::vertex* vertex = _points.get_vertices();
-    const rs2::texture_coordinate* color_point = _points.get_texture_coordinates();
-
-    rs2_intrinsics depth_intrin = _points.get_profile().as<rs2::video_stream_profile>().get_intrinsics();
-
-    sensor_msgs::PointCloud2Modifier modifier(_msg_pointcloud);
-    modifier.setPointCloud2FieldsByString(1, "xyz");
-    modifier.resize(_points.size());
-    if (_ordered_pc)
-    {
-        _msg_pointcloud.width = depth_intrin.width;
-        _msg_pointcloud.height = depth_intrin.height;
-        _msg_pointcloud.is_dense = false;
-    }
-
-    vertex = _points.get_vertices();
-    size_t valid_count(0);
-    
-    if (use_texture)
-    {
-        rs2::video_frame texture_frame = (*texture_frame_itr).as<rs2::video_frame>();
-        texture_width = texture_frame.get_width();
-        texture_height = texture_frame.get_height();
-        num_colors = texture_frame.get_bytes_per_pixel();
-        uint8_t* color_data = (uint8_t*)texture_frame.get_data();
-        std::string format_str;
-        switch(texture_frame.get_profile().format())
-        {
-            case RS2_FORMAT_RGB8:
-                format_str = "rgb";
-                break;
-            case RS2_FORMAT_Y8:
-                format_str = "intensity";
-                break;
-            default:
-                throw std::runtime_error("Unhandled texture format passed in pointcloud " + std::to_string(texture_frame.get_profile().format()));
-        }
-        _msg_pointcloud.point_step = addPointField(_msg_pointcloud, format_str.c_str(), 1, sensor_msgs::PointField::FLOAT32, _msg_pointcloud.point_step);
-        _msg_pointcloud.row_step = _msg_pointcloud.width * _msg_pointcloud.point_step;
-        _msg_pointcloud.data.resize(_msg_pointcloud.height * _msg_pointcloud.row_step);
-
-        sensor_msgs::PointCloud2Iterator<float>iter_x(_msg_pointcloud, "x");
-        sensor_msgs::PointCloud2Iterator<float>iter_y(_msg_pointcloud, "y");
-        sensor_msgs::PointCloud2Iterator<float>iter_z(_msg_pointcloud, "z");
-        sensor_msgs::PointCloud2Iterator<uint8_t>iter_color(_msg_pointcloud, format_str);
-        color_point = _points.get_texture_coordinates();
-
-        float color_pixel[2];
-        for (size_t point_idx=0; point_idx < _points.size(); point_idx++, vertex++, color_point++)
-        {
-            float i(color_point->u);
-            float j(color_point->v);
-            bool valid_color_pixel(i >= 0.f && i <=1.f && j >= 0.f && j <=1.f);
-            bool valid_pixel(vertex->z > 0 && (valid_color_pixel || _allow_no_texture_points));
-            if (valid_pixel || _ordered_pc)
-            {
-                *iter_x = vertex->x;
-                *iter_y = vertex->y;
-                *iter_z = vertex->z;
-
-                if (valid_color_pixel)
-                {
-                    color_pixel[0] = i * texture_width;
-                    color_pixel[1] = j * texture_height;
-                    int pixx = static_cast<int>(color_pixel[0]);
-                    int pixy = static_cast<int>(color_pixel[1]);
-                    int offset = (pixy * texture_width + pixx) * num_colors;
-                    reverse_memcpy(&(*iter_color), color_data+offset, num_colors);  // PointCloud2 order of rgb is bgr.
-                }
-                ++iter_x; ++iter_y; ++iter_z;
-                ++iter_color;
-                ++valid_count;
-            }
-        }
-    }
-    else
-    {
-    
-        std::string format_str = "intensity";
-        _msg_pointcloud.row_step = _msg_pointcloud.width * _msg_pointcloud.point_step;
-        _msg_pointcloud.data.resize(_msg_pointcloud.height * _msg_pointcloud.row_step);
-
-        sensor_msgs::PointCloud2Iterator<float>iter_x(_msg_pointcloud, "x");
-        sensor_msgs::PointCloud2Iterator<float>iter_y(_msg_pointcloud, "y");
-        sensor_msgs::PointCloud2Iterator<float>iter_z(_msg_pointcloud, "z");
-
-        for (size_t point_idx=0; point_idx < _points.size(); point_idx++, vertex++)
-        {
-            bool valid_pixel(vertex->z > 0);
-            if (valid_pixel || _ordered_pc)
-            {
-                *iter_x = vertex->x;
-                *iter_y = vertex->y;
-                *iter_z = vertex->z;
-
-                ++iter_x; ++iter_y; ++iter_z;
-                ++valid_count;
-            }
-        }
-    }
-    _msg_pointcloud.header.stamp = t;
-    if (_align_depth) _msg_pointcloud.header.frame_id = _depth_optical_frame;
-    else              _msg_pointcloud.header.frame_id = _color_optical_frame;
-    if (!_ordered_pc)
-    {
-        _msg_pointcloud.width = valid_count;
-        _msg_pointcloud.height = 1;
-        _msg_pointcloud.is_dense = true;
-        modifier.resize(valid_count);
-    }
-    
-    return true;
-}
-
-double D435Interface::frameSystemTimeSec(const rs2::frame& frame)
-{
-    if (frame.get_frame_timestamp_domain() == RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK)
-    {
-        double elapsed_camera_ms = (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / 1000.0;
-        return (_ros_time_base.toSec() + elapsed_camera_ms);
-    }
-    else
-    {
-        return (frame.get_timestamp() / 1000.0);
-    }
-}
-
-bool D435Interface::setBaseTime(double frame_time, rs2_timestamp_domain time_domain)
-{
-    ROS_WARN_ONCE(time_domain == RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME ? "Frame metadata isn't available! (frame_timestamp_domain = RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME)" : "");
-    if (time_domain == RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK)
-    {
-        ROS_WARN("frame's time domain is HARDWARE_CLOCK. Timestamps may reset periodically.");
-        _ros_time_base = ros::Time::now();
-        _camera_time_base = frame_time;
-        return true;
-    }
-    return false;
-}
-
-void D435Interface::reverse_memcpy(unsigned char* dst, const unsigned char* src, size_t n)
-{
-    size_t i;
-
-    for (i=0; i < n; ++i)
-        dst[n-1-i] = src[i];
-}
-
-
-pcl::PointCloud<pcl::PointXYZRGB>::Ptr D435Interface::PCL_Conversion(const rs2::points& points, const rs2::video_frame& color){
-
-    // Object Declaration (Point Cloud)
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    // TODO check if necessary to reset it by recreating...
+    _pcl_pointcloud = boost::make_shared<PointCloud>();
 
     // Declare Tuple for RGB value Storage (<t0>, <t1>, <t2>)
     std::tuple<uint8_t, uint8_t, uint8_t> RGB_Color;
@@ -347,39 +114,39 @@ pcl::PointCloud<pcl::PointXYZRGB>::Ptr D435Interface::PCL_Conversion(const rs2::
     // PCL Cloud Object Configuration
     //================================
     // Convert data captured from Realsense camera to Point Cloud
-    auto sp = points.get_profile().as<rs2::video_stream_profile>();
+    auto sp = _points.get_profile().as<rs2::video_stream_profile>();
     
-    cloud->width  = static_cast<uint32_t>( sp.width()  );   
-    cloud->height = static_cast<uint32_t>( sp.height() );
-    cloud->is_dense = false;
-    cloud->points.resize( points.size() );
+    _pcl_pointcloud->width  = static_cast<uint32_t>( sp.width()  );   
+    _pcl_pointcloud->height = static_cast<uint32_t>( sp.height() );
+    _pcl_pointcloud->is_dense = false;
+    _pcl_pointcloud->points.resize( _points.size() );
 
-    auto Texture_Coord = points.get_texture_coordinates();
-    auto Vertex = points.get_vertices();
+    auto Texture_Coord = _points.get_texture_coordinates();
+    auto Vertex = _points.get_vertices();
 
     // Iterating through all points and setting XYZ coordinates
     // and RGB values
-    for (int i = 0; i < points.size(); i++)
+    for (int i = 0; i < _points.size(); i++)
     {   
         //===================================
         // Mapping Depth Coordinates
         // - Depth data stored as XYZ values
         //===================================
-        cloud->points[i].x = Vertex[i].x;
-        cloud->points[i].y = Vertex[i].y;
-        cloud->points[i].z = Vertex[i].z;
+        _pcl_pointcloud->points[i].x = Vertex[i].x;
+        _pcl_pointcloud->points[i].y = Vertex[i].y;
+        _pcl_pointcloud->points[i].z = Vertex[i].z;
 
         // Obtain color texture for specific point
         RGB_Color = RGB_Texture(color, Texture_Coord[i]);
 
         // Mapping Color (BGR due to Camera Model) -->TORI: not true, 2 1 0 order color are wrong
-        cloud->points[i].r = std::get<0>(RGB_Color); // Reference tuple<2>
-        cloud->points[i].g = std::get<1>(RGB_Color); // Reference tuple<1>
-        cloud->points[i].b = std::get<2>(RGB_Color); // Reference tuple<0>
+        _pcl_pointcloud->points[i].r = std::get<0>(RGB_Color); // Reference tuple<2>
+        _pcl_pointcloud->points[i].g = std::get<1>(RGB_Color); // Reference tuple<1>
+        _pcl_pointcloud->points[i].b = std::get<2>(RGB_Color); // Reference tuple<0>
 
     }
     
-   return cloud; // PCL RGB Point Cloud generated
+    return true;
 }
 
 std::tuple<int, int, int> D435Interface::RGB_Texture(rs2::video_frame texture, rs2::texture_coordinate Texture_XY)
@@ -405,3 +172,100 @@ std::tuple<int, int, int> D435Interface::RGB_Texture(rs2::video_frame texture, r
 
     return std::tuple<int, int, int>(NT1, NT2, NT3);
 }
+
+/***
+ * Taken directly running official realsense ros launch and reading the tf. 
+ * I am putting here only some of them because why all these tf are necessary?
+ * Official ROS realsense code has a lot of if else to publish some trasf and it is a mess to understand what to pick and how,
+ * but it is good because it takes values from the rs2 camera extrinsic param itself (from what I understood).
+ */
+void D435Interface::setStaticTransforms() {
+    
+    if (!_moving_cam) {
+        geometry_msgs::TransformStamped ref_T_cam_stamp;
+        ref_T_cam_stamp.header.frame_id = _ref_frame;
+        ref_T_cam_stamp.child_frame_id = _camera_name;
+        ref_T_cam_stamp.transform = _ref_T_cam;
+        _static_transforms.push_back(ref_T_cam_stamp);
+    }
+    
+    geometry_msgs::TransformStamped cam_T_depthOptical;
+    cam_T_depthOptical.header.frame_id = _camera_name;
+    cam_T_depthOptical.child_frame_id = _depth_optical_frame;
+    cam_T_depthOptical.transform.translation.x = 0;
+    cam_T_depthOptical.transform.translation.y = 0;
+    cam_T_depthOptical.transform.translation.z = 0;
+    cam_T_depthOptical.transform.rotation.x = -0.500;
+    cam_T_depthOptical.transform.rotation.y = 0.500;
+    cam_T_depthOptical.transform.rotation.z = -0.500;
+    cam_T_depthOptical.transform.rotation.w = 0.500;
+    _static_transforms.push_back(cam_T_depthOptical);
+    
+    //yes, sliglty no "nice" rotation for this... Error or not? who knows
+    //https://github.com/IntelRealSense/realsense-ros/issues/2286
+    geometry_msgs::TransformStamped cam_T_colorOptical;
+    cam_T_colorOptical.header.frame_id = _camera_name;
+    cam_T_colorOptical.child_frame_id = _color_optical_frame;
+    cam_T_colorOptical.transform.translation.x = 0;
+    cam_T_colorOptical.transform.translation.y = 0.015;
+    cam_T_colorOptical.transform.translation.z = 0;
+    cam_T_colorOptical.transform.rotation.x = -0.497;
+    cam_T_colorOptical.transform.rotation.y = 0.501;
+    cam_T_colorOptical.transform.rotation.z = -0.499;
+    cam_T_colorOptical.transform.rotation.w = 0.503;
+    _static_transforms.push_back(cam_T_colorOptical);
+        
+    //IDK if this is necessary...
+    //notice that base_T_colorOptical the child is _camera_name + "_color__optical frame"
+    geometry_msgs::TransformStamped cam_T_color;
+    cam_T_color.header.frame_id = _camera_name;
+    cam_T_color.child_frame_id = _camera_name + "_color_frame";
+    cam_T_color.transform.translation.x = 0;
+    cam_T_color.transform.translation.y = 0.015;
+    cam_T_color.transform.translation.z = 0;
+    cam_T_color.transform.rotation.x = 0.004;
+    cam_T_color.transform.rotation.y = -0.002;
+    cam_T_color.transform.rotation.z = 0;
+    cam_T_color.transform.rotation.w = 1;
+    _static_transforms.push_back(cam_T_color);
+    
+    
+    //tf2::fromMsg(cam_T_colorOptical, _cam_T_optical_tf);
+    D435Interface::fromMsg(cam_T_depthOptical.transform, _cam_T_optical_tf);
+}
+
+void D435Interface::fromMsg(const geometry_msgs::Transform& in, tf2::Transform& out)
+{
+  tf2::Vector3 v;
+  tf2::fromMsg(in.translation, v);
+  out.setOrigin(v);
+  // w at the end in the constructor
+  tf2::Quaternion q;
+  tf2::fromMsg(in.rotation, q);
+  out.setRotation(q);
+}
+
+void D435Interface::fromMsg(const geometry_msgs::Vector3& in, tf2::Vector3& out)
+{
+  out = tf2::Vector3(in.x, in.y, in.z);
+}
+
+void D435Interface::fromMsg(const geometry_msgs::Quaternion& in, tf2::Quaternion& out)
+{
+  // w at the end in the constructor
+  out = tf2::Quaternion(in.x, in.y, in.z, in.w);
+}
+
+realsense_interfaces::PointCloud::ConstPtr D435Interface::getPointCloud () const {
+    return _pcl_pointcloud;
+}
+
+std::string D435Interface::getCameraName() const { return _camera_name; }
+
+std::string D435Interface::getSerial() const { return _serial_no; }
+
+geometry_msgs::Transform D435Interface::getRefTCam() const { return _ref_T_cam; }
+
+const std::vector<geometry_msgs::TransformStamped>* D435Interface::getStaticTransforms() const { return &_static_transforms; }
+
+std::string D435Interface::getRefFrame() const { return _ref_frame; }

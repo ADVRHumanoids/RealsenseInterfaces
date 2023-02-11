@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+
+<arg name="rviz"           default="true"/>
+
+
+<node pkg="realsense_interfaces" type="main" name="main" output="screen"/>
+    
+<node pkg="tf" type="static_transform_publisher" name="world_tf_cams" args="0 0 0 0 0 0 0.707 world cams 10" />
+
+<node if="$(arg rviz)" type="rviz" name="cameras_rviz" pkg="rviz" args="-d $(find realsense_interfaces)/config/rviz/D435Cams.rviz" >
+</node> 
+
+</launch>
