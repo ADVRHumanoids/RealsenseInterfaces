@@ -75,15 +75,6 @@ target_link_libraries(${PROJECT_NAME}_D435Collector
     ${PROJECT_NAME}_D435Interface
 )
 
-# add_executable(${PROJECT_NAME}_D435Sdk src/D435Sdk.cpp)
-# 
-# target_link_libraries(${PROJECT_NAME}_D435Sdk
-#     ${catkin_LIBRARIES}
-#     ${realsense2_LIBRARY}
-#     ${PROJECT_NAME}_D435Interface
-# 
-# )
-# set_target_properties(${PROJECT_NAME}_D435Sdk PROPERTIES OUTPUT_NAME "D435Sdk")
 
 add_executable(${PROJECT_NAME}_main src/main.cpp)
 
