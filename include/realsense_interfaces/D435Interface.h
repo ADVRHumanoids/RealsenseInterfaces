@@ -34,6 +34,8 @@
 #include <pcl_ros/point_cloud.h>
 #include <pcl_ros/transforms.h>
 
+#include <cv_bridge/cv_bridge.h>
+
 namespace realsense_interfaces {
     
 typedef pcl::PointXYZ Point;
@@ -60,6 +62,8 @@ public:
     geometry_msgs::Transform getRefTCam() const;
     std::string getRefFrame() const;
     const std::vector<geometry_msgs::TransformStamped>* getStaticTransforms() const;
+    bool isMovingCam() const;
+    const sensor_msgs::ImagePtr getRosImage() const;
         
     PointCloud::ConstPtr getPointCloud() const;
     
@@ -74,6 +78,7 @@ private:
     const std::string _depth_optical_frame;
     const std::string _color_optical_frame;
     const bool _moving_cam;
+    const bool _allow_no_texture_points;
 
     std::shared_ptr<rs2::pipeline> _pipeline;
     
@@ -86,13 +91,17 @@ private:
     tf2::Transform _cam_T_optical_tf;
     geometry_msgs::Transform _ref_T_optical;
 
+    bool colorToRosImage(const rs2::video_frame& color);
+    sensor_msgs::ImagePtr _ros_image;
+
+
     PointCloud::Ptr  _pcl_pointcloud;
     bool pointsToPclColored(const rs2::video_frame& color);
     std::tuple<int, int, int> RGB_Texture(rs2::video_frame texture, rs2::texture_coordinate Texture_XY);
     
     std::vector<geometry_msgs::TransformStamped> _static_transforms;
-
     void setStaticTransforms();
+    
 };
 
 } //namespace

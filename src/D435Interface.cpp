@@ -7,10 +7,10 @@ D435Interface::D435Interface(const std::string &camera_name,
                   _camera_name(camera_name), _serial_no(serial_no),
                   _depth_optical_frame(_camera_name + "_depth_optical_frame"),
                   _color_optical_frame(_camera_name + "_color_optical_frame"),
-                  _moving_cam(moving_cam)
+                  _moving_cam(moving_cam),
+                  _allow_no_texture_points(false)
 
 {
-
 }
 
 /***
@@ -43,21 +43,51 @@ bool D435Interface::updateTransforms() {
 
 
 bool D435Interface::start(const rs2::context & ctx) {
-    
+
+    ROS_INFO("[%s] Starting...", _camera_name.c_str());
+
     rs2::config cfg;
     cfg.enable_device(_serial_no);
-    //cfg.enable_stream(RS2_STREAM_DEPTH, RS2_STREAM_COLOR);
-    
+
+    //cfg.enable_stream(RS2_STREAM_COLOR, 1280, 720, RS2_FORMAT_RGB8, 30);
+    //cfg.enable_stream(RS2_STREAM_INFRARED, 1280, 720, RS2_FORMAT_Y8, 30);
+    //cfg.enable_stream(RS2_STREAM_DEPTH, 1280, 720, RS2_FORMAT_Z16, 30);
+
     _pipeline = std::make_unique<rs2::pipeline>(ctx);
+
     auto pipe_profile = _pipeline->start(cfg);
     
+//     ROS_INFO("[%s] Resetting device...", _camera_name.c_str());
+//     pipe_profile.get_device().hardware_reset();
+//     ROS_INFO("[%s] ... Reset device DONE", _camera_name.c_str());
+    
+    rs2::device selected_device = pipe_profile.get_device();
+    rs2::depth_sensor depth_sensor = selected_device.first<rs2::depth_sensor>();
+    
+    if (depth_sensor.supports(RS2_OPTION_EMITTER_ENABLED))
+    {
+        std::cout << "Setting RS2_OPTION_EMITTER_ENABLED..." << std::endl;
+
+       // depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f); // Enable emitter
+        //depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 0.f); // Disable emitter
+    }
+    if (depth_sensor.supports(RS2_OPTION_LASER_POWER))
+    {
+        std::cout << "Setting RS2_OPTION_LASER_POWER..." << std::endl;
+        // Query min and max values:
+        //auto range = depth_sensor.get_option_range(RS2_OPTION_LASER_POWER);
+        //depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max); // Set max power
+        //depth_sensor.set_option(RS2_OPTION_LASER_POWER, 0.f); // Disable laser
+    }
+    
+    ROS_INFO("[%s] ... waiting for first data...", _camera_name.c_str());
  	try {
-        auto fs = _pipeline->wait_for_frames(10000); //milliseconds
+        auto fs = _pipeline->wait_for_frames(5000); //milliseconds
         //do nothign just check for first frames
 
     } catch ( std::runtime_error err) {
 
-        ROS_ERROR("[%s] ERROR no message from camera for 10 sec", _camera_name.c_str());
+        ROS_ERROR("[%s] ERROR no message from camera for 5 sec", _camera_name.c_str());
         _pipeline->stop();
         return false;
     }
@@ -93,7 +123,7 @@ bool D435Interface::update(const geometry_msgs::Transform* ref_T_cam) {
     }
     
     pointsToPclColored(color);
-    
+    colorToRosImage(color);
     
     pcl_ros::transformPointCloud(*_pcl_pointcloud, *_pcl_pointcloud, _ref_T_optical);
      _pcl_pointcloud->header.frame_id = _ref_frame;
@@ -121,23 +151,36 @@ bool D435Interface::pointsToPclColored(const rs2::video_frame& color){
     _pcl_pointcloud->is_dense = false;
     _pcl_pointcloud->points.resize( _points.size() );
 
-    auto Texture_Coord = _points.get_texture_coordinates();
-    auto Vertex = _points.get_vertices();
+    const rs2::texture_coordinate* texture_coordinates = _points.get_texture_coordinates();
+    const rs2::vertex* vertices = _points.get_vertices();
 
     // Iterating through all points and setting XYZ coordinates
     // and RGB values
-    for (int i = 0; i < _points.size(); i++)
+    for (size_t i = 0; i < _points.size(); i++)
     {   
+        if (!_allow_no_texture_points) {
+            
+            bool valid_color_pixel = 
+                vertices[i].z > 0 &&
+                texture_coordinates[i].u >= 0.f && texture_coordinates[i].u <=1.f &&
+                texture_coordinates[i].v >= 0.f && texture_coordinates[i].v <=1.f;
+                            
+            if (!valid_color_pixel) {
+
+                continue;
+            }
+        }
+        
         //===================================
         // Mapping Depth Coordinates
         // - Depth data stored as XYZ values
         //===================================
-        _pcl_pointcloud->points[i].x = Vertex[i].x;
-        _pcl_pointcloud->points[i].y = Vertex[i].y;
-        _pcl_pointcloud->points[i].z = Vertex[i].z;
+        _pcl_pointcloud->points[i].x = vertices[i].x;
+        _pcl_pointcloud->points[i].y = vertices[i].y;
+        _pcl_pointcloud->points[i].z = vertices[i].z;
 
         // Obtain color texture for specific point
-        RGB_Color = RGB_Texture(color, Texture_Coord[i]);
+        RGB_Color = RGB_Texture(color, texture_coordinates[i]);
 
         // Mapping Color (BGR due to Camera Model) -->TORI: not true, 2 1 0 order color are wrong
         _pcl_pointcloud->points[i].r = std::get<0>(RGB_Color); // Reference tuple<2>
@@ -148,6 +191,7 @@ bool D435Interface::pointsToPclColored(const rs2::video_frame& color){
     
     return true;
 }
+
 
 std::tuple<int, int, int> D435Interface::RGB_Texture(rs2::video_frame texture, rs2::texture_coordinate Texture_XY)
 {
@@ -172,6 +216,32 @@ std::tuple<int, int, int> D435Interface::RGB_Texture(rs2::video_frame texture, r
 
     return std::tuple<int, int, int>(NT1, NT2, NT3);
 }
+
+bool D435Interface::colorToRosImage(const rs2::video_frame& color) {
+    
+    unsigned int width = color.get_width();
+    unsigned int height = color.get_height();
+    unsigned int bpp = color.get_bytes_per_pixel();
+    
+    cv::Mat cv_image;
+    cv_image.create(height, width, CV_8UC3);
+    cv_image.data = (uint8_t*)color.get_data();
+    
+    //TODO cam info
+    
+    
+    _ros_image = cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::RGB8, cv_image).toImageMsg();
+    _ros_image->width = width;
+    _ros_image->height = height;
+    _ros_image->is_bigendian = false;
+    _ros_image->step = width * bpp;
+    _ros_image->header.frame_id = _camera_name + "_color_optical_frame";
+    _ros_image->header.stamp = ros::Time::now();//TODO;
+    
+    return true;
+    
+}
+
 
 /***
  * Taken directly running official realsense ros launch and reading the tf. 
@@ -269,3 +339,7 @@ geometry_msgs::Transform D435Interface::getRefTCam() const { return _ref_T_cam; 
 const std::vector<geometry_msgs::TransformStamped>* D435Interface::getStaticTransforms() const { return &_static_transforms; }
 
 std::string D435Interface::getRefFrame() const { return _ref_frame; }
+
+bool D435Interface::isMovingCam() const {return _moving_cam;}
+
+const sensor_msgs::ImagePtr D435Interface::getRosImage() const {return _ros_image;}

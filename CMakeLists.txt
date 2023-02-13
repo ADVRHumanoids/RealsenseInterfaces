@@ -15,11 +15,14 @@ find_package(catkin REQUIRED
   pcl_ros
   tf2
   tf2_geometry_msgs
+  tf2_ros
+  cv_bridge
+  image_transport
 )
 
 ## System dependencies are found with CMake's conventions
 find_package(realsense2 REQUIRED) #realsense2_FOUND will be set to indicate whether the package was found.
-
+find_package(OpenCV REQUIRED)
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
@@ -61,6 +64,7 @@ add_library(${PROJECT_NAME}_D435Interface src/D435Interface.cpp)
 target_link_libraries(${PROJECT_NAME}_D435Interface
     ${catkin_LIBRARIES}
     ${realsense2_LIBRARY}
+    ${OpenCV_LIBS}
 )
 
 add_library(${PROJECT_NAME}_D435Collector src/D435Collector.cpp)

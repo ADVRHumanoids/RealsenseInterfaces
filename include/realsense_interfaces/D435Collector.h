@@ -23,6 +23,8 @@
 #include <ros/ros.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
+#include <image_transport/image_transport.h>
 
 #include <librealsense2/rs.hpp> // Include RealSense Cross Platform API
 
@@ -45,14 +47,24 @@ public:
 private:
     ros::NodeHandle* _nh;
     ros::Publisher _pointcloud_publisher;
+    
+    std::unique_ptr<image_transport::ImageTransport> _image_transport;
+    std::vector<image_transport::Publisher> _image_publishers;
+    
+    bool _publish_static_tf;
     tf2_ros::StaticTransformBroadcaster _static_tf_broadcaster;
     
+    std::string _ref_frame;
     std::vector<std::string> _camera_input_names;
     std::vector<std::string> _camera_input_serials;
     
     std::map<std::string, realsense_interfaces::D435Interface> _cams;
     
     realsense_interfaces::PointCloud _final_cloud;
+    
+    //for moving _cams
+    tf2_ros::Buffer _tfBuffer;
+    std::unique_ptr<tf2_ros::TransformListener> _tfListener;
 
 
 };

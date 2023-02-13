@@ -2,11 +2,37 @@
 <launch>
 
 <arg name="rviz"           default="true"/>
+<arg name="ref_frame"           default="profile"/>
 
+<node pkg="realsense_interfaces" type="main" name="rs_d435" output="screen">
+     <param name="point_cloud_topic" value="depth/color/points"/>
+     <param name="ref_frame" value="$(arg ref_frame)"/>
+     <param name="publish_static_tf" value="true"/>
+     
+     <!--     <rosparam param="camera_serials">["021222073482", "943222072865"]</rosparam> -->
 
-<node pkg="realsense_interfaces" type="main" name="main" output="screen"/>
-    
-<node pkg="tf" type="static_transform_publisher" name="world_tf_cams" args="0 0 0 0 0 0 0.707 world cams 10" />
+     
+     
+     <rosparam param="camera_names">["cam_left", "cam_right"]</rosparam>
+<!--      bosch thing -->
+     <rosparam param="camera_serials">["236522070709", "236422074515"]</rosparam>
+     
+     <!-- getParam cant take nested vector, so format is: 
+     [x_cam1, y_cam1, z_cam1, quatx_cam1, quaty_cam1, quatz_cam1, quatw_cam1, ..., x_camN,...quatw_camN]-->
+     <!-- bosch thing : 
+          ref to cam: 0.0468131, 0.0482747, -0.0065666, pi/2, 0, -0.3 (rpy) 
+          ref to cam: 0.0468131, -0.0247823, 0,         pi/2, 0, 0.3 (rpy) 
+     -->
+    <rosparam param="ref_T_cams">[0.0468131, 0.0482747, -0.0065666,    0.6992,    -0.1057,   -0.1057,   0.6992 ,
+                                   0.0468131, -0.0247823,         0,    0.6992,     0.1057,    0.1057,   0.6992 ] </rosparam> 
+     
+     <!--
+     <rosparam param="ref_T_cams">[0.0468131, 0.0482747, -0.0065666,    0.6992,    -0.1057,   -0.1057,   0.6992] </rosparam> 
+     <rosparam param="camera_names">["cam_left"]</rosparam>
+     <rosparam param="camera_serials">["236522070709"]</rosparam> -->
+</node>  
+
+<node pkg="tf" type="static_transform_publisher" name="world_tf_cams" args="0 0 0 0 0 0 0.707 world $(arg ref_frame) 10" />
 
 <node if="$(arg rviz)" type="rviz" name="cameras_rviz" pkg="rviz" args="-d $(find realsense_interfaces)/config/rviz/D435Cams.rviz" >
 </node> 
