@@ -50,6 +50,7 @@ private:
     
     std::unique_ptr<image_transport::ImageTransport> _image_transport;
     std::vector<image_transport::Publisher> _image_publishers;
+    std::vector<ros::Publisher> _camera_info_publishers;
     
     bool _publish_static_tf;
     tf2_ros::StaticTransformBroadcaster _static_tf_broadcaster;

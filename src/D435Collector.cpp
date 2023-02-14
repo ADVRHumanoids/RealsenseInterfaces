@@ -108,7 +108,8 @@ bool D435Collector::init() {
     _image_transport = std::make_unique<image_transport::ImageTransport>(*_nh);
     
     for (size_t i = 0; i<_camera_input_names.size(); i++){
-        _image_publishers.push_back(_image_transport->advertise(_camera_input_names.at(i) + "/color", 1));
+        _image_publishers.push_back(_image_transport->advertise(_camera_input_names.at(i) + "/color/", 1));
+        _camera_info_publishers.push_back(_nh->advertise<sensor_msgs::CameraInfo>(_camera_input_names.at(i) + "/color/camera_info", 1));
     }
     
     return true;
@@ -173,6 +174,7 @@ bool D435Collector::run() {
         } 
 
         _image_publishers.at(i).publish(it.second.getRosImage());
+        _camera_info_publishers.at(i).publish(it.second.getRosCameraInfoColor());
         
         i++;
     }

@@ -24,9 +24,9 @@
 #include <librealsense2/rs.hpp>
 //#include <rs_sensor.h> //for rs2_extrinsics
 
+
 #include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/point_cloud2_iterator.h>
+#include <sensor_msgs/CameraInfo.h>
 #include <geometry_msgs/Transform.h>
 #include <tf2/LinearMath/Transform.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -63,7 +63,9 @@ public:
     std::string getRefFrame() const;
     const std::vector<geometry_msgs::TransformStamped>* getStaticTransforms() const;
     bool isMovingCam() const;
-    const sensor_msgs::ImagePtr getRosImage() const;
+    const sensor_msgs::ImageConstPtr getRosImage() const;
+    const sensor_msgs::CameraInfoConstPtr getRosCameraInfoColor() const;
+    const sensor_msgs::CameraInfoConstPtr getRosCameraInfoDepth() const;
         
     PointCloud::ConstPtr getPointCloud() const;
     
@@ -93,7 +95,8 @@ private:
 
     bool colorToRosImage(const rs2::video_frame& color);
     sensor_msgs::ImagePtr _ros_image;
-
+    std::map<rs2_stream, sensor_msgs::CameraInfoPtr> _ros_camera_info;
+    void fillCameraInfo(const rs2_intrinsics& intrinsic, const rs2_stream& type);
 
     PointCloud::Ptr  _pcl_pointcloud;
     bool pointsToPclColored(const rs2::video_frame& color);

@@ -25,7 +25,7 @@ bool D435Interface::init(const geometry_msgs::Transform& ref_T_cam, const std::s
     setStaticTransforms();
     
     bool flag = updateTransforms();
-    
+        
     return flag;
 }
 
@@ -49,6 +49,8 @@ bool D435Interface::start(const rs2::context & ctx) {
     rs2::config cfg;
     cfg.enable_device(_serial_no);
 
+    /* WARN putting 1280x720 gives problem with the second camera... maybe not enought bandiwth?
+    / commentin this result in the default (640x480) which seems ok */
     //cfg.enable_stream(RS2_STREAM_COLOR, 1280, 720, RS2_FORMAT_RGB8, 30);
     //cfg.enable_stream(RS2_STREAM_INFRARED, 1280, 720, RS2_FORMAT_Y8, 30);
     //cfg.enable_stream(RS2_STREAM_DEPTH, 1280, 720, RS2_FORMAT_Z16, 30);
@@ -56,6 +58,19 @@ bool D435Interface::start(const rs2::context & ctx) {
     _pipeline = std::make_unique<rs2::pipeline>(ctx);
 
     auto pipe_profile = _pipeline->start(cfg);
+    std::cout << pipe_profile.get_streams().size() << std::endl;
+    
+    for (const auto &it: pipe_profile.get_streams()) {
+        
+        if (it.is<rs2::video_stream_profile>()) {
+            
+            auto video_profile = it.as<rs2::video_stream_profile>();
+            rs2_intrinsics intrinsic = video_profile.get_intrinsics();
+            
+            fillCameraInfo(intrinsic, it.stream_type());
+        }
+
+    }
     
 //     ROS_INFO("[%s] Resetting device...", _camera_name.c_str());
 //     pipe_profile.get_device().hardware_reset();
@@ -304,6 +319,75 @@ void D435Interface::setStaticTransforms() {
     D435Interface::fromMsg(cam_T_depthOptical.transform, _cam_T_optical_tf);
 }
 
+void D435Interface::fillCameraInfo(const rs2_intrinsics& intrinsic, const rs2_stream& type) {
+    
+    sensor_msgs::CameraInfoPtr camera_info;
+    camera_info = boost::make_shared<sensor_msgs::CameraInfo>();
+    
+    camera_info->width = intrinsic.width;
+    camera_info->height = intrinsic.height;
+    if (type == RS2_STREAM_COLOR) {
+        camera_info->header.frame_id = _color_optical_frame;
+        
+    } else if (type == RS2_STREAM_DEPTH) {
+        camera_info->header.frame_id = _depth_optical_frame; //TODO is this right??
+    }
+
+    camera_info->K.at(0) = intrinsic.fx;
+    camera_info->K.at(2) = intrinsic.ppx;
+    camera_info->K.at(4) = intrinsic.fy;
+    camera_info->K.at(5) = intrinsic.ppy;
+    camera_info->K.at(8) = 1;
+
+    camera_info->P.at(0) = camera_info->K.at(0);
+    camera_info->P.at(1) = 0;
+    camera_info->P.at(2) = camera_info->K.at(2);
+    camera_info->P.at(3) = 0;
+    camera_info->P.at(4) = 0;
+    camera_info->P.at(5) = camera_info->K.at(4);
+    camera_info->P.at(6) = camera_info->K.at(5);
+    camera_info->P.at(7) = 0;
+    camera_info->P.at(8) = 0;
+    camera_info->P.at(9) = 0;
+    camera_info->P.at(10) = 1;
+    camera_info->P.at(11) = 0;
+
+    // set R (rotation matrix) values to identity matrix
+    camera_info->R.at(0) = 1.0;
+    camera_info->R.at(1) = 0.0;
+    camera_info->R.at(2) = 0.0;
+    camera_info->R.at(3) = 0.0;
+    camera_info->R.at(4) = 1.0;
+    camera_info->R.at(5) = 0.0;
+    camera_info->R.at(6) = 0.0;
+    camera_info->R.at(7) = 0.0;
+    camera_info->R.at(8) = 1.0;
+
+    int coeff_size(5);
+    if (intrinsic.model == RS2_DISTORTION_KANNALA_BRANDT4)
+    {
+        camera_info->distortion_model = "equidistant";
+        coeff_size = 4;
+    } else {
+        camera_info->distortion_model = "plumb_bob";
+    }
+
+    camera_info->D.resize(coeff_size);
+    for (int i = 0; i < coeff_size; i++)
+    {
+        camera_info->D.at(i) = intrinsic.coeffs[i];
+    }
+
+    //they are already zero... who knows
+    if (type == RS2_STREAM_DEPTH)
+    {
+        camera_info->P.at(3) = 0;     // Tx
+        camera_info->P.at(7) = 0;     // Ty
+    }
+    
+    _ros_camera_info.insert ( {type, std::move(camera_info)}); 
+}
+
 void D435Interface::fromMsg(const geometry_msgs::Transform& in, tf2::Transform& out)
 {
   tf2::Vector3 v;
@@ -342,4 +426,8 @@ std::string D435Interface::getRefFrame() const { return _ref_frame; }
 
 bool D435Interface::isMovingCam() const {return _moving_cam;}
 
-const sensor_msgs::ImagePtr D435Interface::getRosImage() const {return _ros_image;}
+const sensor_msgs::ImageConstPtr D435Interface::getRosImage() const {return _ros_image;}
+
+const sensor_msgs::CameraInfoConstPtr D435Interface::getRosCameraInfoColor() const {return _ros_camera_info.at(RS2_STREAM_COLOR);}
+
+const sensor_msgs::CameraInfoConstPtr D435Interface::getRosCameraInfoDepth() const {return _ros_camera_info.at(RS2_STREAM_DEPTH);}
